@@ -1,0 +1,557 @@
+formatVersion: 1
+name: MySQL Cluster installation
+version: 1
+description: Installs MySQL single-tier as well as multi-tier 
+inputs:
+  image:
+    type: string
+    enum:
+      - ubuntu1604
+      - CentOS7
+    description: Image/OS required
+    title: Image/OS
+    default: ubuntu1604
+  flavor:
+    type: string
+    enum:
+      - small
+      - medium
+    description: Flavor
+    title: Flavor
+    default: small
+  no_of_data_nodes:
+    type: integer
+    default: 0
+    title: Number of Data nodes
+    description: Number of nodes to be created for the cluster setup
+  no_of_sql_nodes:
+    type: integer
+    default: 0
+    title: Number of SQL nodes
+    description: Number of SQL nodes to be created for the cluster setup
+  no_of_replicas:
+    type: integer
+    default: 0
+    title: Number of Replicas
+    description: Number of replicas to be created for the cluster setup
+  network:
+    type: string
+    title: Network Capability tag
+    default: ENTER-NETWORK-TAG
+  region:
+    type: string
+    description: Region
+    title: Region Capability Tag
+    default: ENTER-REGION-TAG
+resources:
+  SQL_NODE:
+    type: Cloud.Machine
+    properties:
+      name: sql_node
+      flavor: '${input.flavor}'
+      image: '${input.image}'
+      count: '${input.no_of_sql_nodes}'
+      cloudConfig: |
+        #cloudconfig
+        repo_update: true
+        repo_upgrade: all
+        package_update: true
+        package_upgrade: all
+
+        packages:
+         - wget
+
+        runcmd:
+         - echo root:changeme|sudo chpasswd
+         - sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/g'  /etc/ssh/sshd_config
+         - sed -i 's/PermitRootLogin prohibit-password/PermitRootLogin yes/g'  /etc/ssh/sshd_config
+         - service sshd restart
+         - cd /root
+         - FILE="/root/checkHostName.sh"
+         - /bin/cat <<EOM >$FILE
+         - if [ "`cat /etc/os-release | head -1 | cut -d'=' -f 2 | cut -d '"' -f 2`" == "Ubuntu" ]
+         - then
+         - apt-get install libaio1
+         - groupadd mysql
+         - useradd -g mysql mysql
+         - else
+         - yum -y install libaio
+         - yum -y install bind
+         - yum -y install bind-utils
+         - systemctl stop firewalld
+         - fi
+         - node_ip=\`host myip.opendns.com resolver1.opendns.com | grep "myip.opendns.com has" | awk '{print \$4}'\`
+         - if [ \$node_ip ]
+         - then
+         - echo \$node_ip > /root/privateOrpublic.txt
+         - else
+         - echo \$node_ip > /root/privateOrpublic.txt
+         - if [ "`cat /etc/os-release | head -1 | cut -d'=' -f 2 | cut -d '"' -f 2`" == "Ubuntu" ]
+         - then
+         - node_ip=\`ifconfig \$(route | grep '^default' | grep -o '[^ ]*\$') | grep 'inet addr' | cut -d ':' -f 2 | cut -d ' ' -f 1\`
+         - else
+         - node_ip=\`ifconfig \$(route | grep '^default' | grep -o '[^ ]*\$') | grep 'inet ' | cut -d ' ' -f 10\`
+         - fi
+         - ip=\`dig -x \$node_ip +short\`
+         - host_name=\$(basename \$ip .)
+         - echo \$host_name > /etc/hostname
+         - hostnamectl set-hostname \$host_name
+         - fi
+         - EOM
+         - chmod +x /root/checkHostName.sh
+         - sudo bash /root/checkHostName.sh
+
+         - cd /root
+         - FILE="/root/writehostname.sh"
+         - /bin/cat <<EOM >$FILE
+         - if [ "`cat /etc/os-release | head -1 | cut -d'=' -f 2 | cut -d '"' -f 2`" == "Ubuntu" ]
+         - then
+         - node_host=`hostname`
+         - echo \$node_host >> /root/hostname.txt
+         - echo "\$(ifconfig $(route | grep '^default' | grep -o '[^ ]*$') | grep "inet addr" | cut -d ':' -f 2 | cut -d ' ' -f 1) \$node_host" >> /root/Node.txt
+         - else
+         - node_host=`hostname`
+         - echo \$node_host >> /root/hostname.txt
+         - echo "$(ifconfig $(route | grep '^default' | grep -o '[^ ]*$') | grep "inet " | cut -d ' ' -f 10) \$node_host" >> /root/Node.txt
+         - fi
+         - EOM
+         - chmod +x /root/writehostname.sh
+         - sudo bash /root/writehostname.sh
+
+         - cd /root
+         - FILE="/root/configMySQLCluster.sh"
+         - /bin/cat <<EOM >$FILE
+         - if [ "`cat /etc/os-release | head -1 | cut -d'=' -f 2 | cut -d '"' -f 2`" == "Ubuntu" ]
+         - then
+         - wget http://dev.mysql.com/get/Downloads/MySQL-Cluster-7.4/mysql-cluster-gpl-7.4.12-linux-glibc2.5-x86_64.tar.gz
+         - tar -xzvf mysql-cluster-gpl-7.4.12-linux-glibc2.5-x86_64.tar.gz
+         - mv mysql-cluster-gpl-7.4.12-linux-glibc2.5-x86_64/ mysql/
+         - mv /root/mysql /usr/local/
+         - cd /usr/local/mysql/
+         - ./scripts/mysql_install_db --user=mysql
+         - cp support-files/mysql.server /etc/init.d/mysql
+         - systemctl enable mysql
+         - mv bin/* /usr/local/bin/
+         - rm -rf bin/
+         - ln -s /usr/local/bin /usr/local/mysql/
+         - chown -R root:mysql .
+         - chown -R mysql data
+         - echo "[mysqld]" >> /etc/my.cnf
+         - echo "datadir=/usr/local/mysql/data" >> /etc/my.cnf
+         - echo "socket=/tmp/mysql.sock" >> /etc/my.cnf
+         - echo "user=mysql" >> /etc/my.cnf
+         - echo "ndbcluster" >> /etc/my.cnf
+         - echo "ndb-connectstring=managerhostname" >> /etc/my.cnf
+         - echo "[mysql_cluster]" >> /etc/my.cnf
+         - echo "ndb-connectstring=managerhostname" >> /etc/my.cnf
+         - echo "[mysqld_safe]" >> /etc/my.cnf
+         - echo "log-error=/var/log/mysqld.log" >> /etc/my.cnf
+         - echo "pid-file=/var/run/mysqld/mysqld.pid" >> /etc/my.cnf
+         - else
+         - wget http://dev.mysql.com/get/Downloads/MySQL-Cluster-7.4/MySQL-Cluster-gpl-7.4.10-1.el7.x86_64.rpm-bundle.tar
+         - tar -xvf MySQL-Cluster-gpl-7.4.10-1.el7.x86_64.rpm-bundle.tar
+         - yum -y install perl-Data-Dumper
+         - yum -y remove mariadb-libs
+         - rpm -Uvh MySQL-Cluster-client-gpl-7.4.10-1.el7.x86_64.rpm
+         - rpm -Uvh MySQL-Cluster-server-gpl-7.4.10-1.el7.x86_64.rpm
+         - rpm -Uvh MySQL-Cluster-shared-gpl-7.4.10-1.el7.x86_64.rpm
+         - echo "[mysqld]" >> /etc/my.cnf
+         - echo "ndbcluster" >> /etc/my.cnf
+         - echo "ndb-connectstring=managerhostname:1186" >> /etc/my.cnf
+         - echo "default_storage_engine=ndbcluster" >> /etc/my.cnf
+         - echo "[mysql_cluster]" >> /etc/my.cnf
+         - echo "ndb-connectstring=managerhostname" >> /etc/my.cnf
+         - setenforce 0
+         - fi
+         - EOM
+         - chmod +x /root/configMySQLCluster.sh         
+         - sudo bash /root/configMySQLCluster.sh         
+      networks:
+        - name: '${resource.MySQL_Network.name}'
+      constraints:
+        - tag: '${input.region}'
+  DATA_NODE:
+    type: Cloud.Machine
+    properties:
+      name: data_node
+      flavor: '${input.flavor}'
+      image: '${input.image}'
+      count: '${input.no_of_data_nodes}'
+      cloudConfig: |
+        #cloudconfig
+        repo_update: true
+        repo_upgrade: all
+        package_update: true
+        package_upgrade: all
+
+        packages:
+         - wget
+
+        runcmd:
+         - echo root:changeme|sudo chpasswd
+         - sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/g'  /etc/ssh/sshd_config
+         - sed -i 's/PermitRootLogin prohibit-password/PermitRootLogin yes/g'  /etc/ssh/sshd_config
+         - service sshd restart
+         - cd /root
+         - FILE="/root/checkHostName.sh"
+         - /bin/cat <<EOM >$FILE
+         - if [ "`cat /etc/os-release | head -1 | cut -d'=' -f 2 | cut -d '"' -f 2`" == "Ubuntu" ]
+         - then
+         - apt-get install libaio1
+         - groupadd mysql
+         - useradd -g mysql mysql
+         - else
+         - yum -y install libaio
+         - yum -y install bind
+         - yum -y install bind-utils
+         - systemctl stop firewalld
+         - fi
+         - node_ip=\`host myip.opendns.com resolver1.opendns.com | grep "myip.opendns.com has" | awk '{print \$4}'\`
+         - if [ \$node_ip ]
+         - then
+         - echo \$node_ip > /root/privateOrpublic.txt
+         - else
+         - echo \$node_ip > /root/privateOrpublic.txt
+         - if [ "`cat /etc/os-release | head -1 | cut -d'=' -f 2 | cut -d '"' -f 2`" == "Ubuntu" ]
+         - then
+         - node_ip=\`ifconfig \$(route | grep '^default' | grep -o '[^ ]*\$') | grep 'inet addr' | cut -d ':' -f 2 | cut -d ' ' -f 1\`
+         - else
+         - node_ip=\`ifconfig \$(route | grep '^default' | grep -o '[^ ]*\$') | grep 'inet ' | cut -d ' ' -f 10\`
+         - fi
+         - ip=\`dig -x \$node_ip +short\`
+         - host_name=\$(basename \$ip .)
+         - echo \$host_name > /etc/hostname
+         - hostnamectl set-hostname \$host_name
+         - fi
+         - EOM
+         - chmod +x /root/checkHostName.sh
+         - sudo bash /root/checkHostName.sh
+
+         - cd /root
+         - FILE="/root/writehostname.sh"
+         - /bin/cat <<EOM >$FILE
+         - if [ "`cat /etc/os-release | head -1 | cut -d'=' -f 2 | cut -d '"' -f 2`" == "Ubuntu" ]
+         - then
+         - node_host=`hostname`
+         - echo \$node_host >> /root/hostname.txt
+         - echo "\$(ifconfig $(route | grep '^default' | grep -o '[^ ]*$') | grep "inet addr" | cut -d ':' -f 2 | cut -d ' ' -f 1) \$node_host" >> /root/Node.txt
+         - else
+         - node_host=`hostname`
+         - echo \$node_host >> /root/hostname.txt
+         - echo "$(ifconfig $(route | grep '^default' | grep -o '[^ ]*$') | grep "inet " | cut -d ' ' -f 10) \$node_host" >> /root/Node.txt
+         - fi
+         - EOM
+         - chmod +x /root/writehostname.sh
+         - sudo bash /root/writehostname.sh
+
+         - cd /root
+         - FILE="/root/configMySQLCluster.sh"
+         - /bin/cat <<EOM >$FILE
+         - if [ "`cat /etc/os-release | head -1 | cut -d'=' -f 2 | cut -d '"' -f 2`" == "Ubuntu" ]
+         - then
+         - wget http://dev.mysql.com/get/Downloads/MySQL-Cluster-7.4/mysql-cluster-gpl-7.4.12-linux-glibc2.5-x86_64.tar.gz
+         - tar -xzvf mysql-cluster-gpl-7.4.12-linux-glibc2.5-x86_64.tar.gz
+         - mv mysql-cluster-gpl-7.4.12-linux-glibc2.5-x86_64/ mysql/
+         - mv /root/mysql /usr/local/
+         - cd /usr/local/mysql/
+         - ./scripts/mysql_install_db --user=mysql
+         - cp support-files/mysql.server /etc/init.d/mysql
+         - systemctl enable mysql
+         - mv bin/* /usr/local/bin/
+         - rm -rf bin/
+         - ln -s /usr/local/bin /usr/local/mysql/
+         - chown -R root:mysql .
+         - chown -R mysql data
+         - echo "[mysqld]" >> /etc/my.cnf
+         - echo "datadir=/usr/local/mysql/data" >> /etc/my.cnf
+         - echo "socket=/tmp/mysql.sock" >> /etc/my.cnf
+         - echo "user=mysql" >> /etc/my.cnf
+         - echo "ndbcluster" >> /etc/my.cnf
+         - echo "ndb-connectstring=managerhostname" >> /etc/my.cnf
+         - echo "[mysql_cluster]" >> /etc/my.cnf
+         - echo "ndb-connectstring=managerhostname" >> /etc/my.cnf
+         - echo "[mysqld_safe]" >> /etc/my.cnf
+         - echo "log-error=/var/log/mysqld.log" >> /etc/my.cnf
+         - echo "pid-file=/var/run/mysqld/mysqld.pid" >> /etc/my.cnf
+         - mkdir -p /var/lib/mysql-cluster
+         - chown -R mysql /var/lib/mysql-cluster
+         - ndbd --initial
+         - else
+         - wget http://dev.mysql.com/get/Downloads/MySQL-Cluster-7.4/MySQL-Cluster-gpl-7.4.10-1.el7.x86_64.rpm-bundle.tar
+         - tar -xvf MySQL-Cluster-gpl-7.4.10-1.el7.x86_64.rpm-bundle.tar
+         - yum -y install perl-Data-Dumper
+         - yum -y remove mariadb-libs
+         - rpm -Uvh MySQL-Cluster-client-gpl-7.4.10-1.el7.x86_64.rpm
+         - rpm -Uvh MySQL-Cluster-server-gpl-7.4.10-1.el7.x86_64.rpm
+         - rpm -Uvh MySQL-Cluster-shared-gpl-7.4.10-1.el7.x86_64.rpm
+         - mkdir -p /var/lib/mysql-cluster
+         - echo "[mysqld]" >> /etc/my.cnf
+         - echo "ndbcluster" >> /etc/my.cnf
+         - echo "ndb-connectstring=managerhostname" >> /etc/my.cnf
+         - echo "[mysql_cluster]" >> /etc/my.cnf
+         - echo "ndb-connectstring=managerhostname" >> /etc/my.cnf
+         - fi
+         - EOM
+         - chmod +x /root/configMySQLCluster.sh         
+         - sudo bash /root/configMySQLCluster.sh         
+      networks:
+        - name: '${resource.MySQL_Network.name}'
+      constraints:
+        - tag: '${input.region}'
+  MANAGEMENT_NODE:
+    type: Cloud.Machine
+    properties:
+      name: management_node
+      flavor: '${input.flavor}'
+      image: '${input.image}'
+      cloudConfig: |
+        #cloudconfig
+        repo_update: true
+        repo_upgrade: all
+        package_update: true
+        package_upgrade: all
+
+        packages:
+         - wget
+         - sshpass
+
+        runcmd:
+         - echo root:changeme|sudo chpasswd
+         - sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/g'  /etc/ssh/sshd_config
+         - sed -i 's/PermitRootLogin prohibit-password/PermitRootLogin yes/g'  /etc/ssh/sshd_config
+         - service sshd restart
+         - cd /root
+         - FILE="/root/checkHostName.sh"
+         - /bin/cat <<EOM >$FILE
+         - if [ "`cat /etc/os-release | head -1 | cut -d'=' -f 2 | cut -d '"' -f 2`" == "Ubuntu" ]
+         - then
+         - apt-get install -y libaio1
+         - else
+         - yum -y install libaio
+         - yum -y install bind
+         - yum -y install bind-utils
+         - systemctl stop firewalld
+         - fi
+         - node_ip=\`host myip.opendns.com resolver1.opendns.com | grep "myip.opendns.com has" | awk '{print \$4}'\`
+         - if [ \$node_ip ]
+         - then
+         - echo \$node_ip > /root/privateOrpublic.txt
+         - else
+         - echo \$node_ip > /root/privateOrpublic.txt
+         - if [ "`cat /etc/os-release | head -1 | cut -d'=' -f 2 | cut -d '"' -f 2`" == "Ubuntu" ]
+         - then
+         - node_ip=\`ifconfig \$(route | grep '^default' | grep -o '[^ ]*\$') | grep 'inet addr' | cut -d ':' -f 2 | cut -d ' ' -f 1\`
+         - else
+         - node_ip=\`ifconfig \$(route | grep '^default' | grep -o '[^ ]*\$') | grep 'inet ' | cut -d ' ' -f 10\`
+         - fi
+         - ip=\`dig -x \$node_ip +short\`
+         - host_name=\$(basename \$ip .)
+         - echo \$host_name > /etc/hostname
+         - hostnamectl set-hostname \$host_name
+         - fi
+         - EOM
+         - chmod +x /root/checkHostName.sh
+         - sudo bash /root/checkHostName.sh
+         - cd /root
+         
+         - FILE="/root/configMySQLCluster.sh"
+         - /bin/cat <<EOM >$FILE
+         - if [ ${input.no_of_sql_nodes} == 0 ] && [ ${input.no_of_data_nodes} == 0 ]
+         - then
+         - if [ "`cat /etc/os-release | head -1 | cut -d'=' -f 2 | cut -d '"' -f 2`" == "Ubuntu" ]
+         - then
+         - export DEBIAN_FRONTEND=noninteractive
+         - echo mysql-community-server mysql-community-server/re-root-pass password changeme | sudo debconf-set-selections
+         - echo mysql-community-server mysql-community-server/root-pass password changeme | sudo debconf-set-selections
+         - echo mysql-apt-config mysql-apt-config/select-server select mysql-8.0 | sudo debconf-set-selections
+         - wget https://dev.mysql.com/get/mysql-apt-config_0.8.10-1_all.deb
+         - sudo -E dpkg -i mysql-apt-config_0.8.10-1_all.deb
+         - sudo apt-get -y update && apt-get upgrade -y
+         - sudo apt-get install -y --allow-unauthenticated debconf-utils zsh htop libaio1
+         - sudo -E apt-get install -y --allow-unauthenticated mysql-community-server
+         - else
+         - wget https://repo.mysql.com/mysql80-community-release-el7-1.noarch.rpm
+         - yum -y localinstall mysql80-community-release-el7-1.noarch.rpm
+         - yum -y install mysql-community-server
+         - service mysqld start
+         - fi
+         - else
+         - if [ "`cat /etc/os-release | head -1 | cut -d'=' -f 2 | cut -d '"' -f 2`" == "Ubuntu" ]
+         - then
+         - wget http://dev.mysql.com/get/Downloads/MySQL-Cluster-7.4/mysql-cluster-gpl-7.4.12-linux-glibc2.5-x86_64.tar.gz
+         - tar -xzvf mysql-cluster-gpl-7.4.12-linux-glibc2.5-x86_64.tar.gz
+         - mv mysql-cluster-gpl-7.4.12-linux-glibc2.5-x86_64/ mysql/
+         - cd ~/mysql/
+         - cp bin/ndb_mgm* /usr/local/bin/
+         - chmod +x /usr/local/bin/ndb_mgm*
+         - mkdir -p /var/lib/mysql-cluster
+         - else
+         - wget http://dev.mysql.com/get/Downloads/MySQL-Cluster-7.4/MySQL-Cluster-gpl-7.4.10-1.el7.x86_64.rpm-bundle.tar
+         - tar -xvf MySQL-Cluster-gpl-7.4.10-1.el7.x86_64.rpm-bundle.tar
+         - yum -y install perl-Data-Dumper
+         - yum -y remove mariadb-libs
+         - rpm -Uvh MySQL-Cluster-client-gpl-7.4.10-1.el7.x86_64.rpm
+         - rpm -Uvh MySQL-Cluster-server-gpl-7.4.10-1.el7.x86_64.rpm
+         - rpm -Uvh MySQL-Cluster-shared-gpl-7.4.10-1.el7.x86_64.rpm
+         - mkdir -p /var/lib/mysql-cluster
+         - fi
+         - echo ${resource.DATA_NODE.address} >> /root/data_node_addresses.txt
+         - sed -i 's/\[//g' /root/data_node_addresses.txt
+         - sed -i 's/\]//g' /root/data_node_addresses.txt
+         - echo ${resource.SQL_NODE.address} >> /root/sql_node_addresses.txt
+         - sed -i 's/\[//g' /root/sql_node_addresses.txt
+         - sed -i 's/\]//g' /root/sql_node_addresses.txt
+         - master_hostname=`hostname`
+         - echo "[ndb_mgmd default]" >> /var/lib/mysql-cluster/config.ini
+         - echo "datadir=/var/lib/mysql-cluster" >> /var/lib/mysql-cluster/config.ini
+         - echo "[ndb_mgmd]" >> /var/lib/mysql-cluster/config.ini
+         - echo "hostname=\$master_hostname" >> /var/lib/mysql-cluster/config.ini
+         - echo "NodeId=1" >> /var/lib/mysql-cluster/config.ini
+         - echo "[ndbd default]" >> /var/lib/mysql-cluster/config.ini
+         - echo "NoOfReplicas=${input.no_of_replicas}" >> /var/lib/mysql-cluster/config.ini
+         - echo "datadir=/var/lib/mysql-cluster" >> /var/lib/mysql-cluster/config.ini
+         - echo >> /var/lib/mysql-cluster/config.ini
+         - value=\`cat /root/data_node_addresses.txt\`
+         - arr=\$(echo \$value | tr "," "\n")
+         - var=10
+         - for node in \$arr
+         - do
+         - echo "[ndbd]" >> /var/lib/mysql-cluster/config.ini
+         - sshpass -p 'changeme' scp -o StrictHostKeyChecking=no root@\$node:/root/hostname.txt /root/host\$var.txt
+         - node_hostname=\`cat /root/host\$var.txt\`
+         - echo "hostname=\$node_hostname" >> /var/lib/mysql-cluster/config.ini
+         - echo "NodeId=\$var" >> /var/lib/mysql-cluster/config.ini
+         - var=\$((var+1))
+         - echo >> /var/lib/mysql-cluster/config.ini
+         - done
+         - value=\`cat /root/sql_node_addresses.txt\`
+         - arr=\$(echo \$value | tr "," "\n")
+         - var=20
+         - for node in \$arr
+         - do
+         - echo "[mysqld]" >> /var/lib/mysql-cluster/config.ini
+         - sshpass -p 'changeme' scp -o StrictHostKeyChecking=no root@\$node:/root/hostname.txt /root/host\$var.txt
+         - sql_hostname=\`cat /root/host\$var.txt\`
+         - echo "hostname=\$sql_hostname" >> /var/lib/mysql-cluster/config.ini
+         - echo "NodeId=\$var" >> /var/lib/mysql-cluster/config.ini
+         - var=\$((var+1))
+         - echo >> /var/lib/mysql-cluster/config.ini
+         - done
+         - if [ ${input.no_of_sql_nodes} == 0 ]
+         - then
+         - if [ "`cat /etc/os-release | head -1 | cut -d'=' -f 2 | cut -d '"' -f 2`" == "Ubuntu" ]
+         - then
+         - groupadd mysql
+         - useradd -g mysql mysql
+         - mv /root/mysql /usr/local/
+         - cd /usr/local/mysql/
+         - ./scripts/mysql_install_db --user=mysql
+         - cp support-files/mysql.server /etc/init.d/mysql
+         - systemctl enable mysql
+         - mv bin/* /usr/local/bin/
+         - rm -rf bin/
+         - ln -s /usr/local/bin /usr/local/mysql/
+         - chown -R root:mysql .
+         - chown -R mysql data
+         - echo "[mysqld]" >> /var/lib/mysql-cluster/config.ini
+         - echo "hostname=\$master_hostname" >> /var/lib/mysql-cluster/config.ini
+         - echo "[mysqld]" >> /etc/my.cnf
+         - echo "datadir=/usr/local/mysql/data" >> /etc/my.cnf
+         - echo "socket=/tmp/mysql.sock" >> /etc/my.cnf
+         - echo "user=mysql" >> /etc/my.cnf
+         - echo "ndbcluster" >> /etc/my.cnf
+         - echo "ndb-connectstring=\$master_hostname" >> /etc/my.cnf
+         - echo "[mysql_cluster]" >> /etc/my.cnf
+         - echo "ndb-connectstring=\$master_hostname" >> /etc/my.cnf
+         - echo "[mysqld_safe]" >> /etc/my.cnf
+         - echo "log-error=/var/log/mysqld.log" >> /etc/my.cnf
+         - echo "pid-file=/var/run/mysqld/mysqld.pid" >> /etc/my.cnf
+         - systemctl start mysql.service
+         - else
+         - echo "[mysqld]" >> /var/lib/mysql-cluster/config.ini
+         - echo "hostname=\$master_hostname" >> /var/lib/mysql-cluster/config.ini
+         - echo "[mysqld]" >> /etc/my.cnf
+         - echo "ndbcluster" >> /etc/my.cnf
+         - echo "ndb-connectstring=\$master_hostname" >> /etc/my.cnf
+         - echo "default_storage_engine=ndbcluster" >> /etc/my.cnf
+         - echo "[mysql_cluster]" >> /etc/my.cnf
+         - echo "ndb-connectstring=\$master_hostname" >> /etc/my.cnf
+         - setenforce 0
+         - systemctl start mysql.service
+         - fi
+         - fi
+         - manager_host=`hostname`
+         - if [ "`cat /etc/os-release | head -1 | cut -d'=' -f 2 | cut -d '"' -f 2`" == "Ubuntu" ]
+         - then
+         - echo "$(ifconfig $(route | grep '^default' | grep -o '[^ ]*$') | grep "inet addr" | cut -d ':' -f 2 | cut -d ' ' -f 1) \$manager_host" >> /root/Manager.txt
+         - else
+         - echo "$(ifconfig $(route | grep '^default' | grep -o '[^ ]*$') | grep "inet " | cut -d ' ' -f 10) \$manager_host" >> /root/Manager.txt
+         - fi
+         - cat /root/Manager.txt >> /root/AllIps.txt
+         - value=\`cat /root/data_node_addresses.txt\`
+         - arr=\$(echo \$value | tr "," "\n")
+         - var=1
+         - master_hostname=`hostname`
+         - for node in \$arr
+         - do
+         - sshpass -p 'changeme' ssh -o StrictHostKeyChecking=no root@\$node 'sed -i 's/managerhostname/\$master_hostname/g' /etc/my.cnf'
+         - sshpass -p 'changeme' scp -o StrictHostKeyChecking=no root@\$node:/root/Node.txt /root/Node\$var.txt
+         - cat /root/Node\$var.txt >> /root/AllIps.txt
+         - var=\$((var+1))
+         - done
+         - value=\`cat /root/sql_node_addresses.txt\`
+         - arr=\$(echo \$value | tr "," "\n")
+         - var=1
+         - master_hostname=`hostname`
+         - for node in \$arr
+         - do
+         - sshpass -p 'changeme' ssh -o StrictHostKeyChecking=no root@\$node 'sed -i 's/managerhostname/\$master_hostname/g' /etc/my.cnf'
+         - sshpass -p 'changeme' scp -o StrictHostKeyChecking=no root@\$node:/root/Node.txt /root/Node\$var.txt
+         - cat /root/Node\$var.txt >> /root/AllIps.txt
+         - var=\$((var+1))
+         - done
+         - cat /root/AllIps.txt >> /etc/hosts
+         - value=\`cat /root/data_node_addresses.txt\`
+         - arr=\$(echo \$value | tr "," "\n")
+         - for node in \$arr
+         - do
+         - sshpass -p 'changeme' scp -o StrictHostKeyChecking=no /root/AllIps.txt root@\$node:/root/Manager.txt
+         - sshpass -p 'changeme' ssh -o StrictHostKeyChecking=no root@\$node 'cat /root/Manager.txt >> /etc/hosts'
+         - done
+         - value=\`cat /root/sql_node_addresses.txt\`
+         - arr=\$(echo \$value | tr "," "\n")
+         - for node in \$arr
+         - do
+         - sshpass -p 'changeme' scp -o StrictHostKeyChecking=no /root/AllIps.txt root@\$node:/root/Manager.txt
+         - sshpass -p 'changeme' ssh -o StrictHostKeyChecking=no root@\$node 'cat /root/Manager.txt >> /etc/hosts'
+         - sshpass -p 'changeme' ssh -o StrictHostKeyChecking=no root@\$node 'systemctl start mysql.service'
+         - done
+         - if [ "`cat /etc/os-release | head -1 | cut -d'=' -f 2 | cut -d '"' -f 2`" == "Ubuntu" ]
+         - then
+         - ndb_mgmd -f /var/lib/mysql-cluster/config.ini --configdir=/var/lib/mysql-cluster/
+         - else
+         - ndb_mgmd --config-file=/var/lib/mysql-cluster/config.ini
+         - fi
+         - value=\`cat /root/data_node_addresses.txt\`
+         - arr=\$(echo \$value | tr "," "\n")
+         - for node in \$arr
+         - do
+         - sshpass -p 'changeme' ssh -o StrictHostKeyChecking=no root@\$node 'ndbd'
+         - done
+         - fi
+         - EOM
+         
+         - chmod +x /root/configMySQLCluster.sh
+         - sudo bash /root/configMySQLCluster.sh  
+      networks:
+        - name: '${resource.MySQL_Network.name}'
+      constraints:
+        - tag: '${input.region}'
+  MySQL_Network:
+    type: Cloud.Network
+    properties:
+      name: MySQL_Network
+      networkType: existing
+      constraints:
+        - tag: '${input.network}:soft'
+
