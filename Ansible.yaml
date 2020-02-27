@@ -1,0 +1,50 @@
+formatVersion: 1
+Cloud_Ansible_1:
+  type: Cloud.Ansible
+  properties:
+    host: '${resource.AnsibleLinuxVM.*}'
+    osType: linux
+    account: ansible-CAVA
+    username: '${input.username}'
+    password: '${input.password}'
+    maxConnectionRetries: 20
+    groups:
+      - linux_vms
+    playbooks:
+      provision:
+        - /root/ansible-playbooks/install_web_server.yml
+    hostVariables: |
+      message: Hello ${env.requestedBy}
+      project: ${env.projectName}
+inputs: {}
+resources:
+  Cloud_Ansible_1:
+    type: Cloud.Ansible
+    metadata:
+      layoutPosition:
+        - 0
+        - 0
+    properties:
+      host: '${resource.Cloud_Machine_1.*}'
+      osType: linux
+      account: ''
+      username: ''
+  Cloud_Machine_1:
+    type: Cloud.Machine
+    metadata:
+      layoutPosition:
+        - 0
+        - 1
+    properties:
+      image: win2016''
+      flavor: small
+  Cloud_Ansible_Tower_1:
+    type: Cloud.Ansible.Tower
+    metadata:
+      layoutPosition:
+        - 1
+        - 0
+    properties:
+      host: '${resource.Cloud_Machine_1.*}'
+      account: ''
+      jobTemplates: {}
