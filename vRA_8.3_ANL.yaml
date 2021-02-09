@@ -1,0 +1,56 @@
+VMName:
+  type: string
+  title: VM Name
+inputs:
+  vmname:
+    type: string
+  NIC0:
+    type: string
+    title: NIC0 VLAN
+    enum:
+      - vlan10
+      - vlan20
+      - vlan30
+  NIC1:
+    type: string
+    title: NIC1 VLAN
+    enum:
+      - vlan10
+      - vlan20
+      - vlan30
+resources:
+  Cloud_vSphere_Machine_1:
+    type: Cloud.vSphere.Machine
+    metadata:
+      layoutPosition:
+        - 0
+        - 0
+    properties:
+      name: null
+      image: Windows Server
+      cpuCount: 1
+      totalMemoryMB: 1024
+      networks:
+        - network: '${resource.Cloud_vSphere_Network_1.id}'
+        - network: '${resource.Cloud_vSphere_Network_2.id}'
+  Cloud_vSphere_Network_1:
+    type: Cloud.vSphere.Network
+    metadata:
+      layoutPosition:
+        - 1
+        - 0
+    properties:
+      networkType: existing
+      constraints:
+        - tag: '${input.NIC0}'
+  Cloud_vSphere_Network_2:
+    type: Cloud.vSphere.Network
+    metadata:
+      layoutPosition:
+        - 2
+        - 0
+    properties:
+      networkType: existing
+      constraints:
+        - tag: '${input.NIC1}'
+        - null
